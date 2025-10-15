@@ -1,66 +1,150 @@
-(function(){
-  const el=(id)=>document.getElementById(id);
-  const fmt=(d)=>{if(!d)return'';const t=new Date(d);return isNaN(t)?d:t.toLocaleDateString('cs-CZ')};
-  const copy=(t)=>navigator.clipboard.writeText(t).catch(()=>{});
-  const buildSentence=(c)=>{
-    const p=[]; if(c.nazev)p.push(`Společnost ${c.nazev}`);
-    if(c.ico)p.push(`IČO ${c.ico}`);
-    if(c.sidlo)p.push(`se sídlem ${c.sidlo}`);
-    if(c.soud||c.spisova_znacka){const s=c.soud?`u ${c.soud}`:'';const z=c.spisova_znacka?`, spisová značka ${c.spisova_znacka}`:'';p.push(`zapsaná ${s}${z}`);}
-    if(c.datum_vzniku)p.push(`vznikla dne ${fmt(c.datum_vzniku)}`);
-    const j=(c.statutarni_organ||[]).map(x=>x.jmeno).filter(Boolean); if(j.length)p.push(`statutární orgán: ${j.join(', ')}`);
-    if(c.zpusob_jednani)p.push(`kteří jednají: ${c.zpusob_jednani}`);
-    return p.join(', ')+'.';
-  };
-  const row=(lab,val,copyable=true)=>{
-    const wrap=document.createElement('div'); wrap.className='row';
-    const l=document.createElement('div'); l.className='label'; l.textContent=lab;
-    const v=document.createElement('div'); v.className='value'; v.textContent=val??'—';
-    const c=document.createElement('div'); c.className='copy'; c.textContent=(copyable&&val)?'Copy':''; if(copyable&&val) c.onclick=()=>copy(val);
-    wrap.append(l,v,c); return wrap;
-  };
-  const pct=(a,b)=>(!b||b===0||a==null)?null:Math.round((a/b)*10000)/100;
+(function () {
+  // --- Pomocné funkce / výběr prvků (funguje s oběma sadami ID) ---
+  const pick = (...ids) => ids.map(id => document.getElementById(id)).find(Boolean) || null;
+  const fmt = (d) => { if (!d) return ""; const t = new Date(d); return isNaN(t) ? d : t.toLocaleDateString("cs-CZ"); };
+  const setLoading = (btn, on) => { if (!btn) return; if (on) { btn.dataset.prev = btn.innerHTML; btn.innerHTML = "Hledám…"; btn.disabled = true; } else { btn.innerHTML = btn.dataset.prev || "Hledat"; btn.disabled = false; } };
 
-  const render=(c)=>{
-    el('s').classList.remove('muted'); el('s').textContent=buildSentence(c); el('s').onclick=()=>copy(el('s').textContent);
-    const links=el('links'); links.innerHTML='';
-    const add=(href,label)=>{ if(!href)return; const a=document.createElement('a'); a.href=href;a.target='_blank';a.rel='noopener';a.textContent=label; a.style.marginRight='12px'; links.appendChild(a); };
-    if(c.odkazy){ add(c.odkazy.or_platny,'OR – Platný výpis'); add(c.odkazy.or_uplny,'OR – Úplný výpis'); add(c.odkazy.sbirka_listin,'Sbírka listin'); add(c.odkazy.isir,'ISIR'); }
+  // --- Elementy (zkoušíme více ID variant) ---
+  const $input = pick("query", "q");
+  const $btnSearch = pick("btn-search", "b");
+  const $btnDemo = pick("btn-demo", "d");
+  const $sentence = pick("sentence", "s");
+  const $links = pick("links");
+  const $details = pick("details");
+  const $stat = pick("statutar", "stat");
+  const $jed = pick("jednani", "jed");
+  const $owners = pick("owners");
+  const $ownersNote = pick("ownersNotice", "note");
+  const $err = pick("err", "e");
 
-    const d=el('details'); d.innerHTML='';
-    d.append(row('Název',c.nazev), row('IČO',c.ico), row('Sídlo',c.sidlo), row('Datum vzniku',fmt(c.datum_vzniku)), row('Rejstříkový soud',c.soud), row('Spisová značka',c.spisova_znacka), ...(c.kapital!=null?[row('Základní kapitál (Kč)',String(c.kapital))]:[]));
-    const st=el('stat'); st.innerHTML='';
-    (c.statutarni_organ||[]).forEach(x=>st.append(row('Člen orgánu', `${x.jmeno||'—'}${x.vznik_funkce?` (od ${fmt(x.vznik_funkce)})`:''}`)));
-    const j=el('jed'); j.innerHTML=''; j.append(row('Způsob jednání', c.zpusob_jednani||'—', false));
-
-    const own=el('owners'); own.innerHTML='';
-    const t=document.createElement('table'); t.innerHTML='<thead><tr><th>Jméno / Název</th><th class=\"right\">Vklad (Kč)</th><th class=\"right\">Podíl (%)</th></tr></thead>';
-    const tb=document.createElement('tbody');
-    let has=false;
-    (c.vlastnici||[]).forEach(o=>{ has=true; const tr=document.createElement('tr'); const p=pct(o.vklad,c.kapital); tr.innerHTML=`<td>${o.jmeno||'—'}</td><td class="right">${o.vklad!=null?o.vklad.toLocaleString('cs-CZ'):'—'}</td><td class="right">${p!=null?p.toFixed(2):'—'}</td>`; tb.appendChild(tr); });
-    t.appendChild(tb); own.appendChild(t);
-    el('note').textContent = has? (c.kapital? '' : 'Základní kapitál není uveden – procenta jsou orientační.') : 'U a.s. nemusí být vlastnictví veřejné; u s.r.o. se bere ze sekce Společníci.';
+  // --- Render ---
+  const renderKeyVal = (wrap, label, value) => {
+    if (!wrap) return;
+    const row = document.createElement("div");
+    row.className = "row";
+    row.innerHTML = `<div class="label">${label}</div><div class="value">${value ?? "—"}</div><div></div>`;
+    wrap.appendChild(row);
   };
 
-  async function loadDemo(){
-    const res=await fetch('./data/demo.json'); const data=await res.json(); render(data);
-  }
+  const renderCompany = (c) => {
+    // Sestavená věta
+    if ($sentence) {
+      const parts = [];
+      if (c.nazev) parts.push(`Společnost ${c.nazev}`);
+      if (c.ico) parts.push(`IČO ${c.ico}`);
+      if (c.sidlo) parts.push(`se sídlem ${c.sidlo}`);
+      if (c.soud || c.spisova_znacka) {
+        const s = c.soud ? `u ${c.soud}` : "";
+        const z = c.spisova_znacka ? `, spisová značka ${c.spisova_znacka}` : "";
+        parts.push(`zapsaná ${s}${z}`);
+      }
+      if (c.datum_vzniku) parts.push(`vznikla dne ${fmt(c.datum_vzniku)}`);
+      const jmena = (c.statutarni_organ || []).map(x => x.jmeno).filter(Boolean);
+      if (jmena.length) parts.push(`statutární orgán: ${jmena.join(", ")}`);
+      if (c.zpusob_jednani) parts.push(`kteří jednají: ${c.zpusob_jednani}`);
+      $sentence.textContent = parts.join(", ") + ".";
+      $sentence.classList.remove("muted");
+    }
 
-  async function search(){
-    const q=el('q').value.trim();
-    if(!/^\d{8}$/.test(q)){ alert('Zadejte IČO (8 číslic).'); return; }
-    const e=el('e'); e.style.display='none'; e.textContent='';
-    try{
-      const res=await fetch(`/.netlify/functions/company?q=${encodeURIComponent(q)}`);
-      const text=await res.text(); let data={}; try{ data=JSON.parse(text);}catch{ throw new Error('Neplatná JSON odpověď.'); }
-      if(!res.ok){ throw new Error(data.error||('HTTP '+res.status)); }
-      render(data);
-    }catch(err){
-      await loadDemo();
-      e.textContent='Vyhledání selhalo: '+(err&&err.message?err.message:String(err)); e.style.display='block';
+    // Odkazy
+    if ($links) {
+      $links.innerHTML = "";
+      const add = (href, label) => {
+        if (!href) return;
+        const a = document.createElement("a");
+        a.href = href; a.target = "_blank"; a.rel = "noopener"; a.textContent = label; a.style.marginRight = "12px";
+        $links.appendChild(a);
+      };
+      if (c.odkazy) {
+        add(c.odkazy.or_platny, "OR – Platný výpis");
+        add(c.odkazy.or_uplny, "OR – Úplný výpis");
+        add(c.odkazy.sbirka_listin, "Sbírka listin");
+        add(c.odkazy.isir, "ISIR");
+      }
+    }
+
+    // Podrobnosti
+    if ($details) {
+      $details.innerHTML = "";
+      renderKeyVal($details, "Název", c.nazev);
+      renderKeyVal($details, "IČO", c.ico);
+      renderKeyVal($details, "Sídlo", c.sidlo);
+      renderKeyVal($details, "Datum vzniku", fmt(c.datum_vzniku));
+      renderKeyVal($details, "Rejstříkový soud", c.soud);
+      renderKeyVal($details, "Spisová značka", c.spisova_znacka);
+      if (c.kapital != null) renderKeyVal($details, "Základní kapitál (Kč)", String(c.kapital));
+    }
+
+    // Statutární orgán & jednání
+    if ($stat) {
+      $stat.innerHTML = "";
+      (c.statutarni_organ || []).forEach(p => {
+        const text = `${p.jmeno || "—"}${p.vznik_funkce ? " (od " + fmt(p.vznik_funkce) + ")" : ""}`;
+        renderKeyVal($stat, "Člen orgánu", text);
+      });
+    }
+    if ($jed) {
+      $jed.innerHTML = "";
+      renderKeyVal($jed, "Způsob jednání", c.zpusob_jednani || "—");
+    }
+
+    // Vlastníci
+    if ($owners) {
+      $owners.innerHTML = "";
+      const t = document.createElement("table");
+      t.innerHTML = `<thead><tr><th>Jméno / Název</th><th class="right">Vklad (Kč)</th><th class="right">Podíl (%)</th></tr></thead>`;
+      const tb = document.createElement("tbody");
+      let has = false;
+      const pct = (a, b) => (!b || b === 0 || a == null) ? null : Math.round((a / b) * 10000) / 100;
+      (c.vlastnici || []).forEach(o => {
+        has = true;
+        const tr = document.createElement("tr");
+        const p = pct(o.vklad, c.kapital);
+        tr.innerHTML = `<td>${o.jmeno || "—"}</td><td class="right">${o.vklad != null ? o.vklad.toLocaleString("cs-CZ") : "—"}</td><td class="right">${p != null ? p.toFixed(2) : "—"}</td>`;
+        tb.appendChild(tr);
+      });
+      t.appendChild(tb);
+      $owners.appendChild(t);
+      if ($ownersNote) {
+        $ownersNote.textContent = has
+          ? (c.kapital ? "" : "Základní kapitál není uveden – % jsou orientační.")
+          : "U a.s. nemusí být vlastnictví veřejné; u s.r.o. se bere ze sekce Společníci.";
+      }
+    }
+  };
+
+  // --- Akce ---
+  async function loadDemo() {
+    try {
+      const r = await fetch("./data/demo.json", { cache: "no-store" });
+      const j = await r.json();
+      renderCompany(j);
+      if ($err) { $err.style.display = "none"; $err.textContent = ""; }
+    } catch (e) {
+      if ($err) { $err.textContent = "Demo se nepodařilo načíst (chybí data/demo.json)."; $err.style.display = "block"; }
     }
   }
 
-  el('d').onclick=loadDemo;
-  el('b').onclick=search;
+  async function runSearch() {
+    const q = ($input?.value || "").trim();
+    if (!/^\d{8}$/.test(q)) { alert("Zadejte IČO ve formátu 8 číslic."); return; }
+    setLoading($btnSearch, true);
+    try {
+      const res = await fetch(`/.netlify/functions/company?q=${encodeURIComponent(q)}`, { headers: { "Accept": "application/json" } });
+      const text = await res.text();
+      let data = {}; try { data = JSON.parse(text); } catch { throw new Error("Neplatná JSON odpověď."); }
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      renderCompany(data);
+      if ($err) { $err.style.display = "none"; $err.textContent = ""; }
+    } catch (e) {
+      await loadDemo();
+      if ($err) { $err.textContent = "Vyhledání selhalo: " + (e?.message || e); $err.style.display = "block"; }
+    } finally {
+      setLoading($btnSearch, false);
+    }
+  }
+
+  // --- Bezpečné připojení listenerů (jen když elementy existují) ---
+  if ($btnDemo) $btnDemo.addEventListener("click", loadDemo);
+  if ($btnSearch) $btnSearch.addEventListener("click", runSearch);
 })();
