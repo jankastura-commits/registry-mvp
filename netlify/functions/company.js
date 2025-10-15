@@ -1,8 +1,14 @@
-// netlify/functions/company.js — LIVE default + DEMO via MOCK=1
+// netlify/functions/company.js
+const cheerio = require("cheerio");
+
 exports.handler = async (event) => {
-  const cheerio = require("cheerio");
-  const q = (event.queryStringParameters && event.queryStringParameters.q) ? String(event.queryStringParameters.q).trim() : "";
-  const MOCK = process.env.MOCK ?? "0"; // LIVE by default
+  const q = (event.queryStringParameters && event.queryStringParameters.q)
+    ? String(event.queryStringParameters.q).trim()
+    : "";
+  const MOCK = process.env.MOCK ?? "0";
+  // ... zbytek beze změny ...
+};
+
 
   const DEMO = {
     nazev: "Amazing Health Care s.r.o.",
