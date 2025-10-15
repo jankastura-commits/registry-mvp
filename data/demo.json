@@ -1,0 +1,49 @@
+{
+  "nazev": "Amazing Health Care s.r.o.",
+  "ico": "02597136",
+  "sidlo": "Riegrova 1874/14, České Budějovice 3, 370 01 České Budějovice",
+  "datum_vzniku": "2014-01-29",
+  "soud": "Krajský soud v Českých Budějovicích",
+  "spisova_znacka": "C 22439/KSCB",
+  "kapital": 200000,
+  "odkazy": {
+    "or_platny": "https://or.justice.cz/ias/ui/rejstrik-$firma?ico=02597136",
+    "or_uplny": "https://or.justice.cz/ias/ui/rejstrik-$firma?ico=02597136&typ=plny",
+    "sbirka_listin": "https://or.justice.cz/ias/ui/sbirka-listin?ico=02597136",
+    "isir": "https://isir.justice.cz/isir/ueu/vysledek_lustrace.do"
+  },
+  "statutarni_organ_label": "Jednatelé",
+  "statutarni_organ": [
+    {
+      "jmeno": "Ing. Miroslav Velát",
+      "vznik_funkce": "2015-11-16"
+    },
+    {
+      "jmeno": "Renata Smržová",
+      "vznik_funkce": "2023-01-17"
+    }
+  ],
+  "zpusob_jednani": "Jednatelé jednají za společnost každý samostatně.",
+  "vlastnici": [
+    {
+      "jmeno": "Ing. Miroslav Velát",
+      "vklad": 100000
+    },
+    {
+      "jmeno": "Renata Smržová",
+      "vklad": 100000
+    }
+  ],
+  "skutecni_majitele": [
+    {
+      "typ": "Osoba",
+      "jmeno": "Ing. Miroslav Velát",
+      "popis": "Postavení ve vedení / podíl"
+    },
+    {
+      "typ": "Osoba",
+      "jmeno": "Renata Smržová",
+      "popis": "Postavení ve vedení / podíl"
+    }
+  ]
+}
