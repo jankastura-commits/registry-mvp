@@ -1,5 +1,6 @@
 // netlify/functions/company.js — LIVE default + DEMO via MOCK=1
 exports.handler = async (event) => {
+  const cheerio = require("cheerio");
   const q = (event.queryStringParameters && event.queryStringParameters.q) ? String(event.queryStringParameters.q).trim() : "";
   const MOCK = process.env.MOCK ?? "0"; // LIVE by default
 
