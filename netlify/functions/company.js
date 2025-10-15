@@ -55,9 +55,6 @@ exports.handler = async (event) => {
 
   if (!/^\d{8}$/.test(q)) return { statusCode: 400, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ error: "Zadejte IČO ve formátu 8 číslic." }) };
 
-  let cheerio; try { cheerio = require("cheerio"); } catch (e) {
-    return { statusCode: 500, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ error: "Chybí modul 'cheerio' (nasazuj přes Git/CLI, aby proběhlo `npm i`)." }) };
-  }
 
   async function fetchOR(ico){
     const headers = { "User-Agent":"Mozilla/5.0", "Accept-Language":"cs-CZ,cs;q=0.9,en;q=0.8" };
