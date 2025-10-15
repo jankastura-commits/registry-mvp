@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Identifikátor + Vlastníci</title>
+  <style>
+    body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;margin:0;padding:32px;background:#fff;color:#0f172a}
+    .wrap{max-width:960px;margin:0 auto}
+    .row{display:grid;grid-template-columns:220px 1fr auto;gap:12px;padding:8px 0;border-bottom:1px dashed #e2e8f0}
+    .row:last-child{border-bottom:0}
+    .label{color:#64748b;font-size:13px}
+    .value{font-size:14px}
+    .copy{color:#0ea5e9;font-weight:600;cursor:pointer;font-size:13px}
+    .card{border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 8px 24px rgba(2,6,23,.06);padding:18px;margin:14px 0}
+    .pill{display:inline-block;padding:6px 10px;border-radius:999px;background:#f1f5f9;font-size:12px;margin-left:6px}
+    table{width:100%;border-collapse:collapse} th,td{padding:10px 8px;border-bottom:1px solid #e2e8f0}
+    th{font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.04em;text-align:left}
+    .right{text-align:right}
+    .err{margin-top:10px;font-size:13px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;padding:10px 12px;border-radius:10px;display:none}
+    .sentence{background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:14px}
+    .actions{display:flex;gap:10px;margin-bottom:8px}
+    input{border:1px solid #e2e8f0;border-radius:14px;padding:10px 12px}
+    button{border:1px solid #e2e8f0;border-radius:14px;padding:10px 14px;background:#fff;cursor:pointer}
+    .primary{background:#0ea5e9;color:#fff;border-color:#0ea5e9}
+    .muted{color:#64748b}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Identifikátor firmy <span class="pill">+ Vlastníci</span></h1>
+    <div class="actions">
+      <input id="q" placeholder="IČO (8 číslic)" />
+      <button id="b" class="primary">Hledat</button>
+      <button id="d">Načíst demo</button>
+    </div>
+
+    <div class="card">
+      <h3>Sestavená věta</h3>
+      <div id="s" class="sentence muted">Zadejte IČO nebo načtěte demo.</div>
+      <div id="links" style="margin-top:8px;"></div>
+      <div id="e" class="err"></div>
+    </div>
+
+    <div class="card">
+      <h3>Podrobnosti</h3>
+      <div id="details"></div>
+    </div>
+
+    <div class="card">
+      <h3>Statutární orgán &amp; jednání</h3>
+      <div id="stat"></div>
+      <div id="jed"></div>
+    </div>
+
+    <div class="card">
+      <h3>Vlastníci</h3>
+      <div id="owners"></div>
+      <div id="note" class="muted" style="margin-top:8px;"></div>
+    </div>
+  </div>
+  <script src="./assets/app.js"></script>
+</body>
+</html>

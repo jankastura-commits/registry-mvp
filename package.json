@@ -1,0 +1,11 @@
+{
+  "name": "identifikator-vlastnici-v3",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.12"
+  }
+}
