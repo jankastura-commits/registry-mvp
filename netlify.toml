@@ -1,5 +1,5 @@
 [build]
-  command = "npm i"
+  command = "npm ci"
   publish = "."
   functions = "netlify/functions"
 
@@ -8,4 +8,4 @@
 
 [functions]
   node_bundler = "esbuild"
-  external_node_modules = ["cheerio"]
+  # POZOR: žádný `external_node_modules` sem nedávej – chceme cheerio zabalit dovnitř.
