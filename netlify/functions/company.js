@@ -63,8 +63,9 @@ const RE_COURT1 = new RegExp("Zapsan[áé]\\s+u\\s+([^,\\.]+?)(?:,|\\.)", "i");
 const RE_COURT2 = new RegExp("veden[áé]\\s+u\\s+([^,\\.]+?)(?:,|\\.)", "i");
 const RE_CAP   = new RegExp("Základní\\s+kapitál\\s*[:\\-]?\\s*([0-9][0-9\\s\\.]+)\\s*Kč", "i");
 const RE_JED   = new RegExp("Způsob\\s+jednání(?:\\s+za\\s+společnost)?\\s*[:\\-]?\\s*(.+?)(?=\\s{2,}|Statutární|Jednatelé?|Společníci|Akcionáři|Základní\\s+kapitál|Předmět|$)", "i");
+const RE_JED2  = new RegExp("Jednatel\\w*.*?(jednají|jedná)\\s+za\\s+společnost\\s*:?(.*?)(?=\\s{2,}|Statutární|Jednatelé?|Společníci|Akcionáři|Základní\\s+kapitál|Předmět|$)", "i");
 const RE_NAME  = new RegExp("[A-ZÁČĎÉĚÍĹĽŇÓŘŠŤÚŮÝŽ][^\\d,;()]{1,}\\s+[A-ZÁČĎÉĚÍĹĽŇÓŘŠŤÚŮÝŽ][^\\d,;()]{1,}(?:\\s+[A-ZÁČĎÉĚÍĹĽŇÓŘŠŤÚŮÝŽ][^\\d,;()]{1,})?", "g");
-const RE_VKLAD = new RegExp("vklad\\s*([0-9\\s\\.]+)\\s*Kč", "i");
+const RE_VKLAD = new RegExp("(?:vklad|výše\\s+vkladu)\\s*([0-9\\s\\.]+)\\s*Kč", "i");
 
 // ---------- OR: doplňky (soud, spis, jednání, statutáři, společníci, kapitál) ----------
 async function orDetails(ico) {
@@ -100,10 +101,11 @@ async function orDetails(ico) {
     if (mSp2) out.spisova_znacka = `${mSp2[1]} ${mSp2[2]}`;
   }
 
-  // Rejstříkový soud
+  // Rejstříkový soud (odstranit přívěsky "Den/Datum zápisu: …")
   const mC1 = text.match(RE_COURT1);
   const mC2 = text.match(RE_COURT2);
-  out.soud = (mC1?.[1] || mC2?.[1] || "").trim() || null;
+  const courtRaw = (mC1?.[1] || mC2?.[1] || "").trim();
+  if (courtRaw) out.soud = courtRaw.replace(/\s*(Den|Datum)\s+zápisu.*$/i, "").trim() || null;
 
   // Základní kapitál
   const mCap = text.match(RE_CAP);
@@ -111,9 +113,11 @@ async function orDetails(ico) {
 
   // Způsob jednání
   const mJed = text.match(RE_JED);
+  const mJedAlt = mJed ? null : text.match(RE_JED2);
   if (mJed) out.zpusob_jednani = mJed[1].trim();
+  else if (mJedAlt) out.zpusob_jednani = (mJedAlt[2] || mJedAlt[0]).trim();
 
-  // Vyříznout bloky mezi nadpisy (bez regex literálů)
+  // helper pro vyříznutí bloku (bez regex literálů)
   const between = (startStr, endStr) => {
     const start = text.search(new RegExp(startStr, "i"));
     if (start === -1) return "";
@@ -122,7 +126,7 @@ async function orDetails(ico) {
     return end === -1 ? rest : rest.slice(0, end);
   };
 
-  // Statutární orgán (nebo Jednatelé / Představenstvo / Správní rada)
+  // Statutární orgán (Statutární orgán / Jednatelé / Představenstvo / Správní rada)
   const statSeg = between(
     "(Statutární\\s+orgán|Jednatelé?|Představenstvo|Správní\\s+rada)",
     "(Společníci?|Akcionáři|Základní\\s+kapitál|Předmět|Sídlo|Likvidace|$)"
@@ -130,13 +134,13 @@ async function orDetails(ico) {
   const names = (statSeg.match(RE_NAME) || []).map(s => s.trim());
   out.statutarni_organ = Array.from(new Set(names)).slice(0, 8).map(j => ({ jmeno: j }));
 
-  // Společníci / Akcionáři
+  // Společníci / Akcionáři (+ fallbacky)
   const spolSeg = between(
     "(Společníci?|Akcionáři)",
     "(Základní\\s+kapitál|Statutární|Předmět|Likvidace|Sídlo|$)"
   );
-  if (spolSeg) {
-    spolSeg.split(/(?:;|\s{2,})/).map(s => s.trim()).filter(Boolean).forEach(item => {
+  const pushOwnerFrom = (str) => {
+    str.split(/(?:;|\s{2,})/).map(s => s.trim()).filter(Boolean).forEach(item => {
       const nm = item.match(RE_NAME);
       const vk = item.match(RE_VKLAD);
       if (nm || vk) {
@@ -146,6 +150,12 @@ async function orDetails(ico) {
         });
       }
     });
+  };
+  if (spolSeg) pushOwnerFrom(spolSeg);
+
+  if (!out.vlastnici.length) {
+    const globalOwners = text.match(new RegExp("Společník[^\\.]*?(?:jméno|název)?[^\\.]*?(?:vklad|výše\\s+vkladu)\\s*[0-9\\s\\.]+(?:\\s*Kč)?", "ig")) || [];
+    globalOwners.forEach(s => pushOwnerFrom(s));
   }
 
   return out;
