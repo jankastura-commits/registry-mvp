@@ -65,9 +65,11 @@ async function orDetails(ico) {
   try { html = await httpText(base, headers); }
   catch { html = await httpText(`${base}&typ=plny`, headers); }
 
-  const $ = require("cheerio").load(html);
-  // zpracujeme CELÝ text (je to spolehlivější mezi různými verzemi stránky)
-  const text = $("body").text().replace(/\s+/g, " ").trim();
+  const $ = cheerio.load(html);
+  const text = $("body").text()
+    .replace(/\u00a0/g, " ")   // NBSP
+    .replace(/\s+/g, " ")
+    .trim();
 
   const out = {
     soud: null,
@@ -78,59 +80,23 @@ async function orDetails(ico) {
     vlastnici: []
   };
 
-  // Rejstříkový soud + spisová značka (2 pokusy: společný řádek a pak zvlášť)
-  let m = text.match(/Zapsaná\s+u\s+(.+?)(?:,|\.)\s*spisová\s+značka\s*[:\-]?\s*([A-Z]\s*\d+(?:\/[A-Z]+)?)/i);
-  if (m) { out.soud = m[1].trim(); out.spisova_znacka = m[2].replace(/\s+/g, " ").trim(); }
+  // --- Spisová značka (2 varianty: "Spisová značka C 123" nebo "oddíl C, vložka 123")
+  const mSpis1 = text.match(/spisová\s+značka\s*[:\-]?\s*([A-Z]\s*\d+(?:\/[A-Z]+)?)/i);
+  if (mSpis1) out.spisova_znacka = mSpis1[1].replace(/\s+/g, " ").trim();
   if (!out.spisova_znacka) {
-    const mS = text.match(/spisová\s+značka\s*[:\-]?\s*([A-Z]\s*\d+(?:\/[A-Z]+)?)/i);
-    if (mS) out.spisova_znacka = mS[1].replace(/\s+/g, " ").trim();
-  }
-  if (!out.soud) {
-    const mC = text.match(/Zapsaná\s+u\s+(.+?)(?:,|\s{2,}|\.|$)/i);
-    if (mC) out.soud = mC[1].trim();
+    const mSpis2 = text.match(/oddíl\s*([A-Z])\s*,?\s*vložka\s*(\d+)/i);
+    if (mSpis2) out.spisova_znacka = `${mSpis2[1]} ${mSpis2[2]}`;
   }
 
-  // Základní kapitál
+  // --- Rejstříkový soud (víc variant): "Zapsaná u ...", "vedená u ..."
+  const mCourt1 = text.match(/Zapsaná\s+u\s+([^,\.]+?)(?:,|\.)/i);
+  const mCourt2 = text.match(/veden[áé]\s+u\s+([^,\.]+?)(?:,|\.)/i);
+  out.soud = (mCourt1?.[1] || mCourt2?.[1] || "").trim() || null;
+
+  // --- Základní kapitál
   const mCap = text.match(/Základní\s+kapitál\s*[:\-]?\s*([0-9][0-9\s\.]*)\s*Kč/i);
-  if (mCap) out.kapital = Number(mCap[1].replace(/[^\d]/g, ""));
+  if (mCap) out.kapital = Number(mCap[1].replace(/[^\d]
 
-  // Způsob jednání (vezmeme blok až po další sekci)
-  const mJed = text.match(/Způsob\s+jednání(?:\s+za\s+společnost)?\s*[:\-]?\s*(.+?)(?=\s{2,}|Statutární|Společníci|Akcionáři|Základní\s+kapitál|Předmět|$)/i);
-  if (mJed) out.zpusob_jednani = mJed[1].trim();
-
-  // Pomocník pro vyříznutí bloku dle nadpisů
-  const between = (startRe, endRe) => {
-    const s = text.search(startRe);
-    if (s === -1) return "";
-    const rest = text.slice(s);
-    const e = rest.search(endRe);
-    return e === -1 ? rest : rest.slice(0, e);
-  };
-
-  // Statutární orgán → jména
-  const statSeg = between(/Statutární\s+orgán/i, /Společníci|Akcionáři|Základní\s+kapitál|Předmět|Sídlo|Likvidace/i);
-  const nameRe = /[A-ZÁČĎÉĚÍĹĽŇÓŘŠŤÚŮÝŽ][^\d,;()]{1,}\s+[A-ZÁČĎÉĚÍĹĽŇÓŘŠŤÚŮÝŽ][^\d,;()]{1,}(?:\s+[A-ZÁČĎÉĚÍĹĽŇÓŘŠŤÚŮÝŽ][^\d,;()]{1,})?/g;
-  const names = (statSeg.match(nameRe) || []).map(s => s.trim());
-  const uniq = Array.from(new Set(names)).slice(0, 8);
-  out.statutarni_organ = uniq.map(j => ({ jmeno: j }));
-
-  // Společníci → jméno + vklad
-  const spolSeg = between(/Společníci|Akcionáři/i, /Základní\s+kapitál|Statutární|Předmět|Likvidace|Sídlo|$|Likvidátor/i);
-  if (spolSeg) {
-    spolSeg.split(/(?:;|\s{2,})/).map(s => s.trim()).filter(Boolean).forEach(item => {
-      const nm = item.match(nameRe);
-      const vk = item.match(/vklad\s*([0-9\s\.]+)\s*Kč/i);
-      if (nm || vk) {
-        out.vlastnici.push({
-          jmeno: nm ? nm[0].trim() : null,
-          vklad: vk ? Number(vk[1].replace(/[^\d]/g, "")) : null
-        });
-      }
-    });
-  }
-
-  return out;
-}
 
 
 // ---------- HTTP handler ----------
