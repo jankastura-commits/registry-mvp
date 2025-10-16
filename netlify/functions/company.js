@@ -1,83 +1,16 @@
-// netlify/functions/company.js — LIVE default + DEMO (bez fetch/undici)
-const cheerio = require("cheerio");
+// netlify/functions/company.js – zdroj: Hlídač státu (API v2)
+// Potřebuje env proměnnou HLIDAC_TOKEN (Netlify → Site settings → Environment variables)
 const https = require("node:https");
 const http = require("node:http");
 
-exports.handler = async (event) => {
-  const q = (event.queryStringParameters && event.queryStringParameters.q)
-    ? String(event.queryStringParameters.q).trim()
-    : "";
-  const MOCK = process.env.MOCK ?? "0";
-
-  const DEMO = {
-    nazev: "Amazing Health Care s.r.o.",
-    ico: "02597136",
-    sidlo: "Riegrova 1874/14, České Budějovice 3, 370 01 České Budějovice",
-    datum_vzniku: "2014-01-29",
-    soud: "Krajský soud v Českých Budějovicích",
-    spisova_znacka: "C 22439/KSCB",
-    kapital: 200000,
-    odkazy: {
-      or_platny: "https://or.justice.cz/ias/ui/rejstrik-$firma?ico=02597136",
-      or_uplny: "https://or.justice.cz/ias/ui/rejstrik-$firma?ico=02597136&typ=plny",
-      sbirka_listin: "https://or.justice.cz/ias/ui/sbirka-listin?ico=02597136",
-      isir: "https://isir.justice.cz/isir/ueu/vysledek_lustrace.do"
-    },
-    statutarni_organ_label: "Jednatelé",
-    statutarni_organ: [
-      { jmeno: "Ing. Miroslav Velát", vznik_funkce: "2015-11-16" },
-      { jmeno: "Renata Smržová", vznik_funkce: "2023-01-17" }
-    ],
-    zpusob_jednani: "Jednatelé jednají za společnost každý samostatně.",
-    vlastnici: [
-      { jmeno: "Ing. Miroslav Velát", vklad: 100000 },
-      { jmeno: "Renata Smržová", vklad: 100000 }
-    ]
-  };
-
-  const normalize = (obj) => ({
-    nazev: obj.nazev || null,
-    ico: obj.ico || null,
-    sidlo: obj.sidlo || null,
-    datum_vzniku: obj.datum_vzniku || null,
-    soud: obj.soud || null,
-    spisova_znacka: obj.spisova_znacka || null,
-    kapital: typeof obj.kapital === "number" ? obj.kapital : null,
-    odkazy: obj.odkazy || {},
-    statutarni_organ_label: obj.statutarni_organ_label || "Jednatelé",
-    statutarni_organ: Array.isArray(obj.statutarni_organ) ? obj.statutarni_organ : [],
-    zpusob_jednani: obj.zpusob_jednani || null,
-    vlastnici: Array.isArray(obj.vlastnici) ? obj.vlastnici : []
-  });
-
-  if (!q) return json200(normalize(DEMO));
-  if (MOCK === "1") return json200(normalize(DEMO));
-  if (!/^\d{8}$/.test(q)) return json(400, { error: "Zadejte IČO ve formátu 8 číslic." });
-
-  try {
-    const data = await fetchOR(q);
-    return json200(normalize(data));
-  } catch (e) {
-    return json(502, { error: String(e && e.message ? e.message : e) });
-  }
-};
-
-// ---------- pomocné funkce ----------
-
-function json200(body) {
-  return { statusCode: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
-}
-function json(code, body) {
-  return { statusCode: code, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
-}
-
-function fetchText(url, headers = {}) {
+// ---- pomocné I/O ------------------------------------------------------------
+function reqText(url, headers = {}) {
   return new Promise((resolve, reject) => {
     const mod = url.startsWith("https") ? https : http;
     const req = mod.request(url, { method: "GET", headers }, (res) => {
       let data = "";
       res.setEncoding("utf8");
-      res.on("data", (chunk) => (data += chunk));
+      res.on("data", (c) => (data += c));
       res.on("end", () => {
         const code = res.statusCode || 0;
         if (code >= 200 && code < 300) resolve(data);
@@ -89,72 +22,158 @@ function fetchText(url, headers = {}) {
   });
 }
 
-async function fetchOR(ico) {
-  const headers = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept-Language": "cs-CZ,cs;q=0.9,en;q=0.8",
-    "Cache-Control": "no-cache", "Pragma": "no-cache"
-  };
-  const url = `https://or.justice.cz/ias/ui/rejstrik-$firma?ico=${encodeURIComponent(ico)}`;
-  const urlFull = `https://or.justice.cz/ias/ui/rejstrik-$firma?ico=${encodeURIComponent(ico)}&typ=plny`;
+async function reqJSON(url, headers = {}) {
+  const txt = await reqText(url, headers);
+  try { return JSON.parse(txt); } catch { throw new Error("Neplatná JSON odpověď"); }
+}
 
-  let html;
-  try { html = await fetchText(url, headers); } catch { html = await fetchText(urlFull, headers); }
+const HS_BASE = "https://api.hlidacstatu.cz";
+const HS_AUTH = () => {
+  const t = process.env.HLIDAC_TOKEN || "";
+  if (!t) throw new Error("Chybí HLIDAC_TOKEN (nastav v Netlify → Environment variables).");
+  return { Authorization: `Token ${t}` };
+};
 
-  const $ = cheerio.load(html);
-  const text = $("body").text().replace(/\s+/g, " ");
+// ---- normalizace dat pro UI -------------------------------------------------
+function pick(...vals) { return vals.find(v => v != null && v !== "") ?? null; }
+function toDateISO(x) {
+  if (!x) return null;
+  // Hlídač obvykle vrací ISO nebo „YYYY-MM-DDTHH:mm:ss“
+  const m = String(x).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  // fallback DD.MM.YYYY
+  const m2 = String(x).match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  if (m2) return `${m2[3]}-${m2[2].padStart(2,"0")}-${m2[1].padStart(2,"0")}`;
+  return null;
+}
 
-  const data = {
-    nazev: null, ico, sidlo: null, datum_vzniku: null,
-    soud: null, spisova_znacka: null, kapital: null,
-    odkazy: {
-      or_platny: url, or_uplny: urlFull,
+// převod adresního objektu → řádek textu
+function formatAddress(sidlo) {
+  if (!sidlo || typeof sidlo !== "object") return (typeof sidlo === "string" ? sidlo : null);
+  const parts = [
+    sidlo.ulice || sidlo.Ulice,
+    sidlo.cp || sidlo.CisloDomu || sidlo.CisloPopisne,
+    sidlo.co || sidlo.CisloOrientacni,
+    sidlo.obec || sidlo.Obec || sidlo.Mesto,
+    sidlo.psc || sidlo.PSC,
+    sidlo.stat || sidlo.Stat
+  ].filter(Boolean);
+  return parts.join(", ") || sidlo.text || sidlo.Text || sidlo.Adresa || null;
+}
+
+// převod odpovědi /api/v2/firmy/ico/{ico} na UI objekt
+function normalizeFirm(api) {
+  const nazev = pick(api?.ObchodniJmeno, api?.Jmeno, api?.Nazev, api?.nazev);
+  const ico = pick(api?.ICO, api?.Ico, api?.ico);
+  const sidlo = pick(
+    formatAddress(api?.Sidlo),
+    api?.Sidlo?.AdresaTextem,
+    api?.sidlo,
+    api?.Adresa
+  );
+  const datum_vzniku = toDateISO(pick(api?.DatumVzniku, api?.Zalozeno, api?.Vznik));
+  const soud = pick(api?.RejstrikovySoud, api?.Rejstrik?.Soud, api?.Soud);
+  const spisova_znacka = pick(api?.SpisovaZnacka, api?.Rejstrik?.SpisovaZnacka, api?.spisovaZnacka);
+  const kapital = (typeof api?.ZakladniKapital === "number")
+    ? api.ZakladniKapital
+    : (typeof api?.Kapital === "number" ? api.Kapital : null);
+
+  // stat. orgán (vezmeme první rozumné jméno)
+  const statutarni_organ = [];
+  const orgSrcs = [
+    api?.StatutarniOrgan, api?.StatutarniOrgany, api?.Organy, api?.Vedeni
+  ].flat().filter(Boolean);
+
+  orgSrcs.forEach((x) => {
+    const jmeno = pick(
+      x?.Jmeno, x?.jmeno, x?.Osoba?.Jmeno, x?.Osoba?.CeleJmeno, x?.CeleJmeno, x?.Name
+    );
+    const vznik_funkce = toDateISO(pick(x?.Od, x?.OdKdy, x?.VznikFunkce, x?.DatumOd));
+    if (jmeno) statutarni_organ.push({ jmeno, vznik_funkce });
+  });
+
+  // způsob jednání
+  const zpusob_jednani = pick(
+    api?.ZpusobJednani,
+    api?.ZpusobJednaniZaSpolecnost,
+    api?.Jednani,
+    api?.PopisJednani
+  );
+
+  // odkazy do OR
+  const orBase = ico ? `https://or.justice.cz/ias/ui/rejstrik-$firma?ico=${encodeURIComponent(ico)}` : null;
+
+  return {
+    nazev, ico, sidlo, datum_vzniku, soud, spisova_znacka, kapital,
+    odkazy: orBase ? {
+      or_platny: orBase,
+      or_uplny: `${orBase}&typ=plny`,
       sbirka_listin: `https://or.justice.cz/ias/ui/sbirka-listin?ico=${encodeURIComponent(ico)}`,
       isir: "https://isir.justice.cz/isir/ueu/vysledek_lustrace.do"
-    },
+    } : {},
     statutarni_organ_label: "Statutární orgán",
-    statutarni_organ: [], zpusob_jednani: null, vlastnici: []
+    statutarni_organ,
+    zpusob_jednani,
+    vlastnici: [] // doplníme níže skutečné majitele
   };
+}
 
-  const mName = text.match(/(Název|Obchodní firma)\s*[:\-]\s*(.+?)(?=\s{2,}|Zapsaná|Sídlo|$)/i);
-  if (mName) data.nazev = mName[2].trim();
+// ---- Hlídač: firmní profil + skuteční majitelé ------------------------------
+async function hsFirmByIco(ico) {
+  const url = `${HS_BASE}/api/v2/firmy/ico/${encodeURIComponent(ico)}`;
+  return await reqJSON(url, HS_AUTH()); // /api/v2/firmy/ico/{ico} :contentReference[oaicite:3]{index=3}
+}
 
-  const mAddr = text.match(/Sídlo\s*[:\-]\s*(.+?)(?=\s{2,}|Zapsaná|$)/i);
-  if (mAddr) data.sidlo = mAddr[1].trim();
+// dataset „skutecni-majitele“: zkusíme oba názvy parametru dotazu (q|dotaz)
+async function hsBeneficialOwners(ico) {
+  const build = (param) =>
+    `${HS_BASE}/api/v2/datasety/skutecni-majitele/hledat?${param}=${encodeURIComponent(`( ICO.keyword:${ico} )`)}&strana=1`;
+  let data;
+  try { data = await reqJSON(build("dotaz"), HS_AUTH()); }
+  catch { data = await reqJSON(build("q"), HS_AUTH()); }
+  // očekáváme strukturu { total, page/strana, results[] | zaznamy[] }
+  const rows = data?.results || data?.zaznamy || data?.Items || [];
+  const owners = [];
+  rows.forEach(rec => {
+    // pole se jmény a vklady se v datasetu liší podle období, uděláme „best effort“
+    const part = {
+      jmeno: pick(rec?.majitel?.jmeno, rec?.Majitel?.Jmeno, rec?.osoba?.jmeno, rec?.jmeno, rec?.nazevSubjektu),
+      vklad: typeof rec?.vklad === "number" ? rec.vklad
+           : (typeof rec?.Vklad === "number" ? rec.Vklad
+           : (typeof rec?.podil?.vklad === "number" ? rec.podil.vklad : null))
+    };
+    if (part.jmeno) owners.push(part);
+  });
+  return owners;
+}
 
-  const mCourt = text.match(/Zapsaná.*?u\s+(.+?)(?:,|\s{2,}|$)/i);
-  if (mCourt) data.soud = mCourt[1].trim();
+// ---- HTTP handler -----------------------------------------------------------
+exports.handler = async (event) => {
+  try {
+    const q = (event.queryStringParameters && event.queryStringParameters.q)
+      ? String(event.queryStringParameters.q).trim() : "";
 
-  const mFile = text.match(/spisová značka\s*[:\-]\s*([^\s,;]+)/i);
-  if (mFile) data.spisova_znacka = mFile[1].trim();
+    if (!/^\d{8}$/.test(q)) {
+      return json(400, { error: "Zadejte IČO ve formátu 8 číslic." });
+    }
 
-  const mDate = text.match(/Datum vzniku\s*[:\-]\s*([0-9]{1,2}\.[0-9]{1,2}\.[0-9]{4})/i);
-  if (mDate) {
-    const [d, m, y] = mDate[1].split(".");
-    data.datum_vzniku = `${y.trim()}-${m.trim().padStart(2, "0")}-${d.trim().padStart(2, "0")}`;
+    const firmRaw = await hsFirmByIco(q);                   // Hlídač – detail firmy
+    const firm = normalizeFirm(firmRaw);                    // převod na náš formát
+
+    try {                                                   // Hlídač – skuteční majitelé (pokud jsou)
+      firm.vlastnici = await hsBeneficialOwners(q);
+    } catch {
+      // když dataset není k dispozici, necháme prázdné a UI to zvládne
+    }
+
+    return json(200, firm);
+  } catch (e) {
+    const msg = (e && e.message) ? e.message : String(e);
+    // nejčastější: 401 (špatný/missing token) nebo 4xx/5xx z API
+    return json(502, { error: `Hlídač API: ${msg}` });
   }
+};
 
-  const mCap = text.match(/Základní kapitál\s*[:\-]\s*([0-9\s\.]+)\s*Kč/i);
-  if (mCap) data.kapital = Number(mCap[1].replace(/[^\d]/g, "")) || null;
-
-  const mJed = text.match(/Způsob (jednání|jednání za společnost)\s*[:\-]\s*(.+?)(?:\s{2,}|Statutární|Společníci|$)/i);
-  if (mJed) data.zpusob_jednani = mJed[2].trim();
-
-  const mStat = text.match(/Statutární orgán(.+?)(Společníci|Akcionáři|Základní kapitál|Předmět podnikání|$)/i);
-  if (mStat) {
-    const names = mStat[1].match(/[A-ZÁČĎÉĚÍĹĽŇÓÔŘŠŤÚŮÝŽ][^\d,;()]{2,}\s+[A-ZÁČĎÉĚÍĹĽŇÓÔŘŠŤÚŮÝŽ][^\d,;()]{2,}/g);
-    if (names) data.statutarni_organ = names.slice(0, 8).map(n => ({ jmeno: n.trim() }));
-  }
-
-  const mSpol = text.match(/Společníci(.+?)(Základní kapitál|Statutární|Předmět|$)/i);
-  if (mSpol) {
-    const rows = mSpol[1].split(/;|\s{2,}/).map(s => s.trim()).filter(Boolean);
-    rows.forEach(r => {
-      const nm = r.match(/[A-ZÁČĎÉĚÍĹĽŇÓÔŘŠŤÚŮÝŽ][^\d,;()]{2,}\s+[A-ZÁČĎÉĚÍĹĽŇÓÔŘŠŤÚŮÝŽ][^\d,;()]{2,}/);
-      const vk = r.match(/vklad\s*([0-9\s\.]+)\s*Kč/i);
-      if (nm) data.vlastnici.push({ jmeno: nm[0].trim(), vklad: vk ? Number(vk[1].replace(/[^\d]/g, "")) : null });
-    });
-  }
-
-  return data;
+function json(code, body) {
+  return { statusCode: code, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
 }
