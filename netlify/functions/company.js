@@ -1,13 +1,14 @@
-// netlify/functions/company.js — LIVE default + DEMO přes MOCK=1 (CommonJS, bez top-level await)
+// netlify/functions/company.js — LIVE default + DEMO (bez fetch/undici)
 const cheerio = require("cheerio");
+const https = require("node:https");
+const http = require("node:http");
 
 exports.handler = async (event) => {
   const q = (event.queryStringParameters && event.queryStringParameters.q)
     ? String(event.queryStringParameters.q).trim()
     : "";
-  const MOCK = process.env.MOCK ?? "0"; // LIVE by default
+  const MOCK = process.env.MOCK ?? "0";
 
-  // Demo payload (pro rychlý fallback i bez backendu)
   const DEMO = {
     nazev: "Amazing Health Care s.r.o.",
     ico: "02597136",
@@ -49,20 +50,9 @@ exports.handler = async (event) => {
     vlastnici: Array.isArray(obj.vlastnici) ? obj.vlastnici : []
   });
 
-  if (!q) {
-    return json200(normalize(DEMO));
-  }
-
-  if (MOCK === "1") {
-    const demo = { ...DEMO };
-    if (/^\d{8}$/.test(q)) demo.ico = q;
-    if (q && !/^\d{8}$/.test(q)) demo.nazev = q;
-    return json200(normalize(demo));
-  }
-
-  if (!/^\d{8}$/.test(q)) {
-    return json(400, { error: "Zadejte IČO ve formátu 8 číslic." });
-  }
+  if (!q) return json200(normalize(DEMO));
+  if (MOCK === "1") return json200(normalize(DEMO));
+  if (!/^\d{8}$/.test(q)) return json(400, { error: "Zadejte IČO ve formátu 8 číslic." });
 
   try {
     const data = await fetchOR(q);
@@ -72,7 +62,7 @@ exports.handler = async (event) => {
   }
 };
 
-// ————— helpery a parser (žádný top-level await) —————
+// ---------- pomocné funkce ----------
 
 function json200(body) {
   return { statusCode: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
@@ -81,24 +71,35 @@ function json(code, body) {
   return { statusCode: code, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
 }
 
+function fetchText(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const mod = url.startsWith("https") ? https : http;
+    const req = mod.request(url, { method: "GET", headers }, (res) => {
+      let data = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => {
+        const code = res.statusCode || 0;
+        if (code >= 200 && code < 300) resolve(data);
+        else reject(new Error(`HTTP ${code}`));
+      });
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 async function fetchOR(ico) {
   const headers = {
     "User-Agent": "Mozilla/5.0",
     "Accept-Language": "cs-CZ,cs;q=0.9,en;q=0.8",
-    "Cache-Control": "no-cache",
-    "Pragma": "no-cache"
+    "Cache-Control": "no-cache", "Pragma": "no-cache"
   };
   const url = `https://or.justice.cz/ias/ui/rejstrik-$firma?ico=${encodeURIComponent(ico)}`;
   const urlFull = `https://or.justice.cz/ias/ui/rejstrik-$firma?ico=${encodeURIComponent(ico)}&typ=plny`;
 
-  const load = async (u) => {
-    const r = await fetch(u, { headers });
-    if (!r.ok) throw new Error(`OR HTTP ${r.status}`);
-    return await r.text();
-  };
-
   let html;
-  try { html = await load(url); } catch { html = await load(urlFull); }
+  try { html = await fetchText(url, headers); } catch { html = await fetchText(urlFull, headers); }
 
   const $ = cheerio.load(html);
   const text = $("body").text().replace(/\s+/g, " ");
@@ -112,9 +113,7 @@ async function fetchOR(ico) {
       isir: "https://isir.justice.cz/isir/ueu/vysledek_lustrace.do"
     },
     statutarni_organ_label: "Statutární orgán",
-    statutarni_organ: [],
-    zpusob_jednani: null,
-    vlastnici: []
+    statutarni_organ: [], zpusob_jednani: null, vlastnici: []
   };
 
   const mName = text.match(/(Název|Obchodní firma)\s*[:\-]\s*(.+?)(?=\s{2,}|Zapsaná|Sídlo|$)/i);
@@ -132,7 +131,7 @@ async function fetchOR(ico) {
   const mDate = text.match(/Datum vzniku\s*[:\-]\s*([0-9]{1,2}\.[0-9]{1,2}\.[0-9]{4})/i);
   if (mDate) {
     const [d, m, y] = mDate[1].split(".");
-    data.datum_vzniku = `${y.trim()}-${m.trim().padStart(2,"0")}-${d.trim().padStart(2,"0")}`;
+    data.datum_vzniku = `${y.trim()}-${m.trim().padStart(2, "0")}-${d.trim().padStart(2, "0")}`;
   }
 
   const mCap = text.match(/Základní kapitál\s*[:\-]\s*([0-9\s\.]+)\s*Kč/i);
