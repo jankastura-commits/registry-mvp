@@ -1,5 +1,5 @@
 // netlify/functions/company.js
-// FINÁLNÍ: ARES (základ) + OR justice (soud, spis, statutáři, jednání, společníci)
+// FINÁLNÍ: ARES (základ) + OR justice (soud, spis, jednání, statutáři, společníci)
 // Node 20, CommonJS, bez fetch/undici (používáme https.request)
 
 const https = require("node:https");
@@ -24,10 +24,12 @@ function httpText(url, headers = {}) {
     req.end();
   });
 }
+
 async function httpJSON(url, headers = {}) {
   const t = await httpText(url, headers);
   try { return JSON.parse(t); } catch { throw new Error("Neplatná JSON odpověď"); }
 }
+
 const pick = (...xs) => xs.find(v => v !== null && v !== undefined && v !== "") ?? null;
 
 // ---------- ARES: základní údaje ----------
@@ -50,9 +52,19 @@ async function aresFirm(ico) {
     nazev: pick(j?.obchodniJmeno, j?.obchodniJmenoText, j?.obchodniJmenoZkracene),
     ico: j?.ico || null,
     sidlo: adresa,
-    datum_vzniku: pick(j?.datumVzniku, j?.vznik) || null,
+    datum_vzniku: pick(j?.datumVzniku, j?.vznik) || null
   };
 }
+
+// ---- REGEX konstanty (bez /…/ literálů) ----
+const RE_SPIS1 = new RegExp("spisová\\s+značka\\s*[:\\-]?\\s*([A-Z]\\s*\\d+(?:\\/[A-Z]+)?)", "i");
+const RE_SPIS2 = new RegExp("oddíl\\s*([A-Z])\\s*,?\\s*vložka\\s*(\\d+)", "i");
+const RE_COURT1 = new RegExp("Zapsan[áé]\\s+u\\s+([^,\\.]+?)(?:,|\\.)", "i");
+const RE_COURT2 = new RegExp("veden[áé]\\s+u\\s+([^,\\.]+?)(?:,|\\.)", "i");
+const RE_CAP   = new RegExp("Základní\\s+kapitál\\s*[:\\-]?\\s*([0-9][0-9\\s\\.]+)\\s*Kč", "i");
+const RE_JED   = new RegExp("Způsob\\s+jednání(?:\\s+za\\s+společnost)?\\s*[:\\-]?\\s*(.+?)(?=\\s{2,}|Statutární|Jednatelé?|Společníci|Akcionáři|Základní\\s+kapitál|Předmět|$)", "i");
+const RE_NAME  = new RegExp("[A-ZÁČĎÉĚÍĹĽŇÓŘŠŤÚŮÝŽ][^\\d,;()]{1,}\\s+[A-ZÁČĎÉĚÍĹĽŇÓŘŠŤÚŮÝŽ][^\\d,;()]{1,}(?:\\s+[A-ZÁČĎÉĚÍĹĽŇÓŘŠŤÚŮÝŽ][^\\d,;()]{1,})?", "g");
+const RE_VKLAD = new RegExp("vklad\\s*([0-9\\s\\.]+)\\s*Kč", "i");
 
 // ---------- OR: doplňky (soud, spis, jednání, statutáři, společníci, kapitál) ----------
 async function orDetails(ico) {
@@ -80,24 +92,64 @@ async function orDetails(ico) {
     vlastnici: []
   };
 
-  // --- Spisová značka (2 varianty: "Spisová značka C 123" nebo "oddíl C, vložka 123")
-  const mSpis1 = text.match(/spisová\s+značka\s*[:\-]?\s*([A-Z]\s*\d+(?:\/[A-Z]+)?)/i);
-  if (mSpis1) out.spisova_znacka = mSpis1[1].replace(/\s+/g, " ").trim();
+  // Spisová značka
+  const mSp1 = text.match(RE_SPIS1);
+  if (mSp1) out.spisova_znacka = mSp1[1].replace(/\s+/g, " ").trim();
   if (!out.spisova_znacka) {
-    const mSpis2 = text.match(/oddíl\s*([A-Z])\s*,?\s*vložka\s*(\d+)/i);
-    if (mSpis2) out.spisova_znacka = `${mSpis2[1]} ${mSpis2[2]}`;
+    const mSp2 = text.match(RE_SPIS2);
+    if (mSp2) out.spisova_znacka = `${mSp2[1]} ${mSp2[2]}`;
   }
 
-  // --- Rejstříkový soud (víc variant): "Zapsaná u ...", "vedená u ..."
-  const mCourt1 = text.match(/Zapsaná\s+u\s+([^,\.]+?)(?:,|\.)/i);
-  const mCourt2 = text.match(/veden[áé]\s+u\s+([^,\.]+?)(?:,|\.)/i);
-  out.soud = (mCourt1?.[1] || mCourt2?.[1] || "").trim() || null;
+  // Rejstříkový soud
+  const mC1 = text.match(RE_COURT1);
+  const mC2 = text.match(RE_COURT2);
+  out.soud = (mC1?.[1] || mC2?.[1] || "").trim() || null;
 
-  // --- Základní kapitál
-  const mCap = text.match(/Základní\s+kapitál\s*[:\-]?\s*([0-9][0-9\s\.]*)\s*Kč/i);
-  if (mCap) out.kapital = Number(mCap[1].replace(/[^\d]
+  // Základní kapitál
+  const mCap = text.match(RE_CAP);
+  if (mCap) out.kapital = Number(mCap[1].replace(/[^\d]/g, ""));
 
+  // Způsob jednání
+  const mJed = text.match(RE_JED);
+  if (mJed) out.zpusob_jednani = mJed[1].trim();
 
+  // Vyříznout bloky mezi nadpisy (bez regex literálů)
+  const between = (startStr, endStr) => {
+    const start = text.search(new RegExp(startStr, "i"));
+    if (start === -1) return "";
+    const rest = text.slice(start);
+    const end = rest.search(new RegExp(endStr, "i"));
+    return end === -1 ? rest : rest.slice(0, end);
+  };
+
+  // Statutární orgán (nebo Jednatelé / Představenstvo / Správní rada)
+  const statSeg = between(
+    "(Statutární\\s+orgán|Jednatelé?|Představenstvo|Správní\\s+rada)",
+    "(Společníci?|Akcionáři|Základní\\s+kapitál|Předmět|Sídlo|Likvidace|$)"
+  );
+  const names = (statSeg.match(RE_NAME) || []).map(s => s.trim());
+  out.statutarni_organ = Array.from(new Set(names)).slice(0, 8).map(j => ({ jmeno: j }));
+
+  // Společníci / Akcionáři
+  const spolSeg = between(
+    "(Společníci?|Akcionáři)",
+    "(Základní\\s+kapitál|Statutární|Předmět|Likvidace|Sídlo|$)"
+  );
+  if (spolSeg) {
+    spolSeg.split(/(?:;|\s{2,})/).map(s => s.trim()).filter(Boolean).forEach(item => {
+      const nm = item.match(RE_NAME);
+      const vk = item.match(RE_VKLAD);
+      if (nm || vk) {
+        out.vlastnici.push({
+          jmeno: nm ? nm[0].trim() : null,
+          vklad: vk ? Number(vk[1].replace(/[^\d]/g, "")) : null
+        });
+      }
+    });
+  }
+
+  return out;
+}
 
 // ---------- HTTP handler ----------
 exports.handler = async (event) => {
@@ -109,7 +161,8 @@ exports.handler = async (event) => {
   }
 
   try {
-    const a = await aresFirm(ico);
+    let a = {};
+    try { a = await aresFirm(ico); } catch { a = {}; }   // když ARES vrátí 404, pokračuj jen s OR
     const o = await orDetails(ico);
 
     const result = {
